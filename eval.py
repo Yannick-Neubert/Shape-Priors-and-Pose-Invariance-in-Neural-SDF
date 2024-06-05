@@ -8,6 +8,7 @@ import torch
 from tqdm import tqdm
 
 import matplotlib.pyplot as plt
+from sklearn.manifold import TSNE
 
 device = torch.device("cpu")
 decoder = Decoder()
@@ -48,8 +49,10 @@ else:
 
 decoder.eval()
 
+
+
 def eval_recon(gt, latent):
-    loss_recon = 0
+    loss_total = 0
     num_shapes = len(gt)
 
     for i in tqdm(range(num_shapes)):
@@ -74,13 +77,13 @@ def eval_recon(gt, latent):
         pred = decoder(g, x, z)
         pred = pred.detach().flatten()
 
-        loss_recon += loss_l1(sdf_gt, pred)
+        loss_total += loss_l1(sdf_gt, pred)
 
-    loss_avg = loss_recon / num_shapes
+    loss_avg = loss_total / num_shapes
     return loss_avg
 
-def eval_norm(latent):
-    loss_norm = 0
+def eval_orientation(latent):
+    loss_total = 0
     num_shapes = latent.num_embeddings
 
     for i in tqdm(range(num_shapes)):
@@ -95,87 +98,90 @@ def eval_norm(latent):
             _, _, _, (l3, l4) = get_normalization_params(img)
             angle = abs(np.degrees(np.arctan2(l4, l3)))
 
-        loss_norm += angle
+        loss_total += angle
 
-    loss_avg = loss_norm / num_shapes
+    loss_avg = loss_total / num_shapes
     return loss_avg
 
-def plot_recon(latent, rows, cols, indices):
+def eval():
+    print(f"Evaluating {model_dir}" + f", pose inferrence: {pose_inference}")
+
+    if pose_inference:
+        loss_seen = eval_recon(test_seen, seen_vecs)
+        loss_unseen = eval_recon(test_unseen, unseen_vecs)
+
+        orientation_seen = eval_orientation(seen_vecs)
+        orientation_unseen = eval_orientation(unseen_vecs)
+
+        print(f"seen l1: {loss_seen:.3f}")
+        print(f"unseen l1: {loss_unseen:.3f}")
+
+        print(f"seen orientation: {orientation_seen:.3f}")
+        print(f"unseen orientation: {orientation_unseen:.3f}")
+
+    else:
+        loss_train = eval_recon(train, train_vecs)
+        loss_seen = eval_recon(test_seen, seen_vecs)
+        loss_unseen = eval_recon(test_unseen, unseen_vecs)
+
+        orientation_train = eval_orientation(train_vecs)
+        orientation_seen = eval_orientation(seen_vecs)
+        orientation_unseen = eval_orientation(unseen_vecs)
+        orientation_rand = eval_orientation(rand_vecs)
+
+        print(f"train l1: {loss_train:.3f}")
+        print(f"seen l1: {loss_seen:.3f}")
+        print(f"unseen l1: {loss_unseen:.3f}")
+
+        print(f"train orientation: {orientation_train:.3f}")
+        print(f"seen orientation: {orientation_seen:.3f}")
+        print(f"unseen orientation: {orientation_unseen:.3f}")
+        print(f"rand orientation: {orientation_rand:.3f}")
+
+
+
+def plot_train_stats():
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(14, 4))
+    ax1.plot(loss_log)
+    ax1.set_title("Loss")
+    ax2.plot(lat_mag_log)
+    ax2.set_title("Magnitude")
+    ax3.plot(mom_log)
+    ax3.set_title("Orientation")
+    plt.show()
+
+def plot_train_codes():
+    '''plots one code per class'''
+    indices = np.arange(train_vecs.num_embeddings)[::18]
     rows, cols = 5, 10
     fig, axs = plt.subplots(rows, cols, figsize=(14, 4))
-    x = torch.tensor(get_coordinate_grid(sidelen))
-    g = torch.tensor([0])
 
-    # shapes = np.random.permutation(num_shapes)
-    shapes = indices
     for i, ax in enumerate(axs.ravel()):
-    # if True:
-    # for i in tqdm(range(num_shapes)):
-        z = train_vecs(torch.tensor(shapes[i]))
-        # z = rand_vecs(torch.tensor(shapes[i]))
+        z = train_vecs(torch.tensor(indices[i]))
 
-        z = z.repeat(x.shape[0], 1)
-
-        pred = decoder(g, x, z)
-
-        sdf = np.append(x.numpy(), pred.detach().numpy(), axis=1)
-        img = samples_to_img(sdf)
+        img = decode_latent(decoder, z)
 
         ax.imshow(img, cmap="gray")
         ax.set_xticks([])
         ax.set_yticks([])
     plt.show()
 
-def plot_latent():
-    cp_freq = 50
-    epochs = range(cp_freq, num_epochs+1, cp_freq)
-    indices = np.arange(0, len(train), 200)
+def plot_mean_shapes():
+    rows, cols = 5, 10
+    fig, axs = plt.subplots(rows, cols, figsize=(14, 4))
 
-    fig, axs = plt.subplots(len(epochs), len(indices), figsize=(6,6))
+    for i, ax in enumerate(axs.ravel()):
+        zs = train_vecs(torch.arange(18*i, 18*(i+1)))
+        z = torch.mean(zs, dim=0)
 
-    for epoch, ax in zip(epochs, axs):
-        # if epoch == 0:
-        #     for i, ax in zip(indices, ax.ravel()):
-        #         sdf, _, _ = train[i]
-        #         img = samples_to_img(sdf)
-        #         ax.imshow(img, cmap="gray")
-        #         ax.set_xticks([])
-        #         ax.set_yticks([])
-        #     continue
+        im = decode_latent(decoder, z)
 
-        cp = torch.load(os.path.join(model_dir, model_params_subdir, f"cp_{epoch}.pth"), map_location=device)
-        logs_cp = torch.load(os.path.join(model_dir, model_logs_subdir, f"log_{epoch}.pth"), map_location=device)
-
-        decoder.load_state_dict(cp["model_state_dict"])
-        num_shapes = cp["lat_vecs"]["weight"].shape[0]
-        train_vecs = torch.nn.Embedding(num_shapes, latent_size, max_norm=1)
-        train_vecs.load_state_dict(cp["lat_vecs"])
-
-        mag = (get_mean_latent_vector_magnitude(train_vecs))
-        bound = np.sqrt(3*mag**2 / latent_size)
-        rand_vecs = torch.nn.Embedding(num_shapes, latent_size, max_norm=1)
-        torch.nn.init.uniform_(rand_vecs.weight.data, -bound, bound)
-
-        decoder.eval()
-
-        for i, ax in zip(indices, ax.ravel()):
-            z = rand_vecs(torch.tensor([i]))
-            img = decode_latent(decoder, z)
-            ax.imshow(img, cmap="gray")
-            ax.set_xticks([])
-            ax.set_yticks([])
-            if epoch == num_epochs:
-                _, _, (l2, l3), _ = get_normalization_params(img)
-                angle = (np.degrees(np.arctan2(l3, l2)/2))
-                ax.set_xlabel(r"$\theta$ = " + f"%.2f" % angle)
-    
-    for e, ax in zip(epochs, axs.T[0].ravel()):
-        ax.set_ylabel(e)
-
-    # axs[0,0].set_ylabel("gt")
+        ax.imshow(im)
+        ax.set_xticks([])
+        ax.set_yticks([])
     plt.show()
-    
-def interpolate():
+
+def plot_interpolations():
     ii = [7, 9, 12, 31]
     n = 8
     fig, axes = plt.subplots(len(ii), n+2+1, figsize=(14, 4))
@@ -216,34 +222,46 @@ def interpolate():
     plt.tight_layout()
     plt.show()
 
-def plots():
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(14, 4))
-    ax1.plot(loss_log)
-    ax1.set_title("Loss")
-    ax2.plot(lat_mag_log)
-    ax2.set_title("Norm")
-    ax3.plot(mom_log)
-    ax3.set_title("Orientation")
+def plot_rand_through_time():
+    cp_freq = 50
+    epochs = range(cp_freq, num_epochs+1, cp_freq)
+    indices = np.arange(0, len(train), 200)
+
+    fig, axs = plt.subplots(len(epochs), len(indices))
+
+    for epoch, ax in zip(epochs, axs):
+        cp = torch.load(os.path.join(model_dir, model_params_subdir, f"cp_{epoch}.pth"), map_location=device)
+        logs_cp = torch.load(os.path.join(model_dir, model_logs_subdir, f"log_{epoch}.pth"), map_location=device)
+
+        decoder.load_state_dict(cp["model_state_dict"])
+        num_shapes = cp["lat_vecs"]["weight"].shape[0]
+        train_vecs = torch.nn.Embedding(num_shapes, latent_size, max_norm=1)
+        train_vecs.load_state_dict(cp["lat_vecs"])
+
+        mag = (get_mean_latent_vector_magnitude(train_vecs))
+        bound = np.sqrt(3*mag**2 / latent_size)
+        rand_vecs = torch.nn.Embedding(num_shapes, latent_size, max_norm=1)
+        torch.nn.init.uniform_(rand_vecs.weight.data, -bound, bound)
+
+        decoder.eval()
+
+        for i, ax in zip(indices, ax.ravel()):
+            z = rand_vecs(torch.tensor([i]))
+            img = decode_latent(decoder, z)
+            ax.imshow(img, cmap="gray")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            if epoch == num_epochs:
+                _, _, (l2, l3), _ = get_normalization_params(img)
+                angle = (np.degrees(np.arctan2(l3, l2)/2))
+                ax.set_xlabel(r"$\theta$ = " + f"%.2f" % angle)
+    
+    for e, ax in zip(epochs, axs.T[0].ravel()):
+        ax.set_ylabel(e)
+
     plt.show()
-
-def means():
-    loss = 0
-    # num_classes = int(train_vecs.num_embeddings / 18)
-    num_classes = int(unseen_vecs.num_embeddings / 20)
-    for i in tqdm(range(num_classes)):
-        zs = unseen_vecs(torch.arange(18*i, 18*(i+1)))
-        z = torch.mean(zs, dim=0)
-        im = decode_latent(decoder, z)
-
-        _, _, (l2, l3), _ = get_normalization_params(im)   
-        angle = abs(np.degrees(np.arctan2(l3, l2)/2))
-        # plt.imshow(im)
-        # plt.title(f"%.2f" % angle)
-        # plt.show()
-        loss += angle
-    print(loss / num_classes)
-
-def plot_inference():
+    
+def plot_inferred():
     s = 3
     indices = np.arange(s*20, (s+1)*20, 2)
     # indices = np.arange(0, 100, 10)
@@ -273,69 +291,81 @@ def plot_inference():
     axs[1,0].set_ylabel("inferred")
 
     plt.show()
+    
 
-def eval():
-    print(f"Net{order}" + f", pose inferrence: {pose_inference}")
 
-    if pose_inference:
-        loss_seen = eval_recon(test_seen, seen_vecs)
-        loss_unseen = eval_recon(test_unseen, unseen_vecs)
-        print(f"seen l1: {loss_seen:.3f}")
-        print(f"unseen l1: {loss_unseen:.3f}")
-
-        norm_seen = eval_norm(seen_vecs)
-        norm_unseen = eval_norm(unseen_vecs)
-        print(f"seen norm: {norm_seen:.3f}")
-        print(f"unseen norm: {norm_unseen:.3f}")
-
-    else:
-        loss_train = eval_recon(train, train_vecs)
-        loss_seen = eval_recon(test_seen, seen_vecs)
-        loss_unseen = eval_recon(test_unseen, unseen_vecs)
-
-        print(f"train l1: {loss_train:.3f}")
-        print(f"seen l1: {loss_seen:.3f}")
-        print(f"unseen l1: {loss_unseen:.3f}")
-
-        norm_train = eval_norm(train_vecs)
-        norm_seen = eval_norm(seen_vecs)
-        norm_unseen = eval_norm(unseen_vecs)
-        norm_rand = eval_norm(rand_vecs)
-
-        print(f"train norm: {norm_train:.3f}")
-        print(f"seen norm: {norm_seen:.3f}")
-        print(f"unseen norm: {norm_unseen:.3f}")
-        print(f"rand norm: {norm_rand:.3f}")
-
-def plot_recon_wrapper():
-    indices = np.arange(train_vecs.num_embeddings)[::18]
-    print(indices)
-    plot_recon(train_vecs, 5, 9, indices)
-
-def plot_inferred():
-    for i in range(len(test_seen)):
-        fig, (ax1, ax2) = plt.subplots(1, 2)
-        sdf, _, _ = test_seen[i]
-        ax1.imshow(samples_to_img(sdf))
-        
-        z = seen_vecs(torch.tensor(i))
+def tsne_projection():
+    num_classes = int(num_shapes / 18)
+    X = train_vecs.weight.detach().numpy()
+    # X = np.append(X, seen_vecs.weight.detach().numpy(), axis=0)
+    # Y = np.arange(num_classes).repeat(18)
+    Y = []
+    for i in tqdm(range(num_shapes)):
+        z = train_vecs(torch.tensor([i]))
         img = decode_latent(decoder, z)
         _, _, (l2, l3), _ = get_normalization_params(img)
-        ax2.imshow(img)
-        ax2.set_title(np.degrees(np.arctan2(l3, l2)/2))
-        plt.show()
-    
-    
-# eval()
-# plot_recon_wrapper()
-# interpolate()
-# plots()
-# plot_inference()
-means()
-# plot_latent()
-# plot_inferred()
+        angle = (np.degrees(np.arctan2(l3, l2)/2))
+        Y.append(angle)
 
-# plt.imshow(decode_latent(decoder, seen_vecs(torch.tensor([0]))))
-# plt.show()
-
+    Y2 =np.arange(num_classes).repeat(2)
     
+    tsne = TSNE(n_components=2)
+    mapping = tsne.fit_transform(X)
+    print(tsne.kl_divergence_)
+
+    # plt.scatter(mapping[:,0], mapping[:,1], c=Y, cmap="seismic")
+    # plt.colorbar()
+    # plt.show()
+
+    # Sample 2D data
+    x = mapping[:, 0]
+    y = mapping[:, 1]
+
+    # Create a figure with two axes
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+
+    # Scatter plot on the first axis
+    # cmap = "hsv"
+    cmap = "seismic"
+    scatter = ax1.scatter(x[:num_shapes], y[:num_shapes], c=Y, cmap=cmap, label="train")
+    # scatter2 = ax1.scatter(x[num_shapes:], y[num_shapes:], c=Y2, marker="^", edgecolor="w", cmap=cmap, label="inferred")
+    ax1.set_title("t-SNE Embedding")
+    ax2.set_title("Details of Clicked Point")
+    fig.colorbar(scatter, ax=ax1)
+
+    def on_click(event):
+        if event.inaxes != ax1:
+            return
+        contains, ind = scatter.contains(event)
+        if contains:
+            idx = ind["ind"][0]
+            
+            # Clear the second axis
+            ax2.clear()
+
+            z = train_vecs(torch.tensor(idx))
+            ax2.imshow(decode_latent(decoder, z))
+            ax2.set_title(f"%.2f" % Y[idx])
+            
+            # Refresh the plot
+            fig.canvas.draw()
+
+    # Attach the click event
+    fig.canvas.mpl_connect("button_press_event", on_click)
+
+    ax1.legend()
+    plt.show()
+
+
+#REMEMBER TO SET THESE WORKSPACE PARAMETERS: order AND pose_inferrence
+if __name__ == "__main__":
+    eval()
+
+    # tsne_projection()
+
+    # plot_train_stats()
+    # plot_train_codes()
+    # plot_mean_shapes()
+    # plot_rand_through_time()
+    # plot_interpolations()
+    # plot_inferred()

@@ -21,7 +21,7 @@ if not os.path.isdir(normalization_param_dir):
     os.makedirs(normalization_param_dir)
 
 
-remove_files = ["bone", "brick", "phone", "device", "pencil", "spring", "watch"]
+remove_files = ["brick", "phone", "device", "pencil", "spring", "watch"]
 
 files = os.listdir(source_dir)
 files = [file for file in files if all(rf not in file for rf in remove_files)]
