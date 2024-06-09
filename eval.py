@@ -292,65 +292,80 @@ def plot_inferred():
 
     plt.show()
     
-
-
+#interactive
 def tsne_projection():
+    #all train classes
     num_classes = int(num_shapes / 18)
+
+    #train + inferred codes
     X = train_vecs.weight.detach().numpy()
-    # X = np.append(X, seen_vecs.weight.detach().numpy(), axis=0)
-    # Y = np.arange(num_classes).repeat(18)
-    Y = []
+    X = np.append(X, seen_vecs.weight.detach().numpy(), axis=0)
+    Y = np.arange(num_classes).repeat(18)
+
+    #inference
+    Yinf = np.arange(num_classes).repeat(2)
+
+    #orientation
+    Ynorm = []
     for i in tqdm(range(num_shapes)):
         z = train_vecs(torch.tensor([i]))
+        z = torch.tensor(X[i])
         img = decode_latent(decoder, z)
         _, _, (l2, l3), _ = get_normalization_params(img)
         angle = (np.degrees(np.arctan2(l3, l2)/2))
-        Y.append(angle)
-
-    Y2 =np.arange(num_classes).repeat(2)
+        Ynorm.append(angle)
     
+    #tsne projection stats
     tsne = TSNE(n_components=2)
     mapping = tsne.fit_transform(X)
-    print(tsne.kl_divergence_)
+    print("KL Divergence: ", tsne.kl_divergence_)
 
-    # plt.scatter(mapping[:,0], mapping[:,1], c=Y, cmap="seismic")
-    # plt.colorbar()
-    # plt.show()
-
-    # Sample 2D data
+    #plotting
     x = mapping[:, 0]
     y = mapping[:, 1]
 
-    # Create a figure with two axes
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 6))
 
-    # Scatter plot on the first axis
-    # cmap = "hsv"
-    cmap = "seismic"
-    scatter = ax1.scatter(x[:num_shapes], y[:num_shapes], c=Y, cmap=cmap, label="train")
-    # scatter2 = ax1.scatter(x[num_shapes:], y[num_shapes:], c=Y2, marker="^", edgecolor="w", cmap=cmap, label="inferred")
-    ax1.set_title("t-SNE Embedding")
-    ax2.set_title("Details of Clicked Point")
+    scatter = ax1.scatter(x[:num_shapes], y[:num_shapes], c=Y, cmap="hsv", label="train")
+    scatterinf = ax1.scatter(x[num_shapes:], y[num_shapes:], c=Yinf, marker="^", edgecolor="w", cmap="hsv", label="inferred")
+
+    scatternorm = ax2.scatter(x[:num_shapes], y[:num_shapes], c=Ynorm, cmap="seismic")
+
+    fig.suptitle("t-SNE Embedding")
+    ax1.set_title("Classes")
+    ax2.set_title("Orientation")
+    ax3.set_title("click a point to show details")
+
     fig.colorbar(scatter, ax=ax1)
+    fig.colorbar(scatternorm, ax=ax2)
 
+    #interaction
     def on_click(event):
-        if event.inaxes != ax1:
+        if event.inaxes == ax1:
+            contains, ind = scatter.contains(event)
+            if not contains:
+                contains, ind = scatterinf.contains(event)
+                if contains:
+                    ind["ind"][0] += num_shapes
+        elif event.inaxes == ax2:
+            contains, ind = scatternorm.contains(event)
+        else:
             return
-        contains, ind = scatter.contains(event)
-        if contains:
-            idx = ind["ind"][0]
-            
-            # Clear the second axis
-            ax2.clear()
 
-            z = train_vecs(torch.tensor(idx))
-            ax2.imshow(decode_latent(decoder, z))
-            ax2.set_title(f"%.2f" % Y[idx])
+        if contains:
+            idx = ind["ind"][0]            
+            ax3.clear()
             
-            # Refresh the plot
+            z = torch.tensor(X[idx])
+            img = decode_latent(decoder, z)
+            _, _, (l2, l3), _ = get_normalization_params(img)
+            angle = (np.degrees(np.arctan2(l3, l2)/2))
+
+            ax3.imshow(img)
+            ax3.set_title(r"$\theta = $" + f"%.2f" % angle)
+
             fig.canvas.draw()
 
-    # Attach the click event
     fig.canvas.mpl_connect("button_press_event", on_click)
 
     ax1.legend()
@@ -361,7 +376,7 @@ def tsne_projection():
 if __name__ == "__main__":
     eval()
 
-    # tsne_projection()
+    # tsne_projection() #interactive
 
     # plot_train_stats()
     # plot_train_codes()

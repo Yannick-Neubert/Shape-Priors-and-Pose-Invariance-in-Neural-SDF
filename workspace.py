@@ -2,13 +2,13 @@ import os
 
 # In order to reproduce the results presented in the thesis:
 
-# DO CHANGE THESE ----------------------------------------
-source_dir = "../mpeg7"
+# DO ADAPT THESE ----------------------------------------
 order = 2
 pose_inference = False
 
 
 # DONT CHANGE THESE --------------------------------------
+source_dir = "mpeg7"
 data_dir = "data"
 normalization_param_subdir = "NormalizationParameters"
 sdf_samples_subdir = "SdfSamples"
@@ -26,7 +26,10 @@ num_samp_per_scene = sidelen**2 + num_surface_samples
 latent_size = 128
 hidden_dim = 256
 batch_size = 16
+
 num_epochs = 250
+start_epoch = 0
+save_every = 50
 
 num_recon_iters = 250
 num_pose_inference_iters = 1000
